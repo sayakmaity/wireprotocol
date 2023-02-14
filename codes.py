@@ -5,6 +5,7 @@ class Requests:
     LIST_ACCOUNTS = "03"
     SEND_MESSAGE = "04"
     VIEW_MESSAGES = "05"
+    DISCONNECT = "06"
 
 class Responses:
     SUCCESS = "00"
