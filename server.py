@@ -117,33 +117,67 @@ class Server(BaseServer):
 
     def handle_send_message(self, conn, msg):
         sender, receiver, text_message = msg.split("\n")
+        sender = sender.strip()
+        receiver = receiver.strip()
+        text_message = text_message.strip()
+
+        if receiver not in self.usernames:
+            return self.generate_payload(Responses.FAILURE, True, "Receiver not found.")
+
         receiver_conn = None
         with self.clients_lock:
             for username in self.usernames:
                 if username == receiver:
                     receiver_conn = self.active_connections.get(username)
                     break
+
         if receiver_conn:
-            msg = f"{sender}\n{text_message}"
+            msg = f"\n<{sender}>: {text_message}"
 
             message = msg.encode(self.encoding)
             msg_len = len(message)
             send_length = str(msg_len).encode(self.encoding)
             send_length += b' ' * (self.header_length - len(send_length))
-
+            
             receiver_conn.send(send_length)
             receiver_conn.send(message)
-
-
-            # self.send_message(receiver_conn, Responses.SUCCESS, f"{sender}\n{text_message}")
             return self.generate_payload(Responses.SUCCESS, True, "Message sent.")
         else:
-            return self.generate_payload(Responses.FAILURE, True, "Receiver not found.")
+            user = (self.username_to_user[receiver])
+            user.add_message(f"\n<{sender}>: {text_message}")
+            print(user.message_queue)
+            return self.generate_payload(Responses.SUCCESS, True, "Message Queued.")
 
 
-    def handle_view_messages(self, conn, msg):
-        # TODO: handle view messages request
-        pass
+    def handle_view_messages(self, conn, msg=""):
+        with self.users_lock:
+            username = None
+            for u, connection in self.active_connections.items():
+                if connection == conn:
+                    username = u
+            
+            if username:
+                user = self.username_to_user[username]
+                message = ""
+                msg = user.get_message()
+                while msg:
+                    message += (msg)
+                    msg = user.get_message()
+
+                # msg_len = len(message)
+                # send_length = str(msg_len).encode(self.encoding)
+                # send_length += b' ' * (self.header_length - len(send_length))
+                
+                # conn.send(send_length)
+                # conn.send(message)
+                return self.generate_payload(Responses.SUCCESS, True, message)
+            else:
+                return self.generate_payload(Responses.FAILURE, True, "Server thinks user does not exist.")
+
+
+
+
+
 
     def disconnect(self, conn, msg=""):
         with self.clients_lock:

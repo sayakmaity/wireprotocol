@@ -118,7 +118,14 @@ class BaseServer:
             conn (socket.socket): The client socket connection.
             message (str): The message to send.
         """
-        conn.send(f"{response_code}{message}".encode(self.encoding))
+        msg = f"{response_code}{message}"
+        message = msg.encode(self.encoding)
+        msg_len = len(message)
+        send_length = str(msg_len).encode(self.encoding)
+        send_length += b' ' * (self.header_length - len(send_length))
+
+        conn.send(send_length)
+        conn.send(message)
 
     def handle_request(self, conn, msg):
         """
