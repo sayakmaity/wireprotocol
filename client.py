@@ -2,6 +2,7 @@ import socket
 import logging
 import threading
 import asyncio
+import signal
 from codes import Requests, Responses
 
 class Client:
@@ -155,26 +156,27 @@ class Client:
                 break
 
     def start(self):
-        self.start_logger()
-        try:
-            self.client.connect(self.addr)
-        except KeyboardInterrupt:
-            logging.info("Shutting down client")
-            self.disconnect()
+        self.client.connect(self.addr)
 
     
     def main(self):
-        receive_thread = threading.Thread(target=self.receive_message)
-        receive_thread.start()
+        try:
+            receive_thread = threading.Thread(target=self.receive_message)
+            receive_thread.start()
+            signal.pause()
+        except (KeyboardInterrupt, SystemExit):
+            logging.info("Shutting down client")
+            self.disconnect()
 
 
 if __name__ == '__main__':
     client = Client('10.250.37.222')
     client.start()
-    client.create_account("jchiu") # replace "johndoe" with the desired username
+    client.start_logger()
+    client.create_account("sayak") # replace "johndoe" with the desired username
 
     # Start the async message receiver
-    client.login("jchiu")
+    client.login("sayak")
     client.main()
 
     # Log out and close the connection
