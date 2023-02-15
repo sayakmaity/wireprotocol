@@ -86,11 +86,16 @@ class BaseServer:
                     if not connected:
                         break
                     self.send_message(conn, metadata['status'],  metadata["message"])
-                    
+            except (BrokenPipeError, ConnectionResetError):
+                # This means the client has disconnected
+                logging.error(f"[DISCONNECT] {addr} disconnected unexpectedly")
+                self.disconnect(conn)
+                break
             except Exception as e:
                 logging.exception(e)
                 self.disconnect(conn)
                 break
+
 
     def receive_message(self, conn, length):
         """

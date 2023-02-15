@@ -2,6 +2,7 @@ import socket
 import threading
 from codes import Requests, Responses
 import logging
+import fnmatch
 from base_server import BaseServer
 
 from user import User
@@ -38,7 +39,6 @@ class Server(BaseServer):
         self.usernames = []
         self.username_to_user = {}
         self.active_connections = {}
-        self.addr_to_username = {}
 
         self.requests = {
             Requests.LOGIN: self.handle_login,
@@ -56,8 +56,16 @@ class Server(BaseServer):
         self.server.bind((self.host, self.port))
 
     def handle_login(self, conn, msg):
-        # TODO: handle login request
-        pass
+        username = msg
+        with self.users_lock:
+            if username in self.usernames:
+                if username in self.active_connections:
+                    return self.generate_payload(Responses.FAILURE, True, "User already logged in")
+                else:
+                    self.active_connections[username] = conn
+                    return self.generate_payload(Responses.SUCCESS, True, "User logged in")
+            else:
+                return self.generate_payload(Responses.FAILURE, True, "Username does not exist")
 
     def handle_create_account(self, conn, msg):
         username = msg
@@ -84,16 +92,62 @@ class Server(BaseServer):
                 return self.generate_payload(Responses.FAILURE, True, "Account not found")
 
     def handle_list_accounts(self, conn, msg):
-        # TODO: handle list accounts request
-        pass
+        """
+        Handle a list accounts request from a client.
+        The method returns a list of all usernames that match the provided regex-like query.
+
+        Parameters:
+        conn (socket.socket): The client socket connection.
+        msg (str): The query to search for.
+
+        Returns:
+        dict: The response metadata in the form of a dictionary.
+        """
+        query = msg.strip()
+        matching_accounts = []
+        for username in self.usernames:
+            if fnmatch.fnmatch(username, query):
+                matching_accounts.append(username)
+        if matching_accounts:
+            response_message = "\n".join(matching_accounts)
+            return self.generate_payload(Responses.SUCCESS, True, f"\n{response_message}")
+        else:
+            return self.generate_payload(Responses.FAILURE, True, "No matching accounts found.")
+
 
     def handle_send_message(self, conn, msg):
-        # TODO: handle send message request
-        pass
+        sender, receiver, text_message = msg.split("\n")
+        receiver_conn = None
+        with self.clients_lock:
+            for username in self.usernames:
+                if username == receiver:
+                    receiver_conn = self.active_connections.get(username)
+                    break
+        if receiver_conn:
+            self.send_message(receiver_conn, Responses.SUCCESS, f"{sender}\n{text_message}")
+            return self.generate_payload(Responses.SUCCESS, True, "Message sent.")
+        else:
+            return self.generate_payload(Responses.FAILURE, True, "Receiver not found.")
+
 
     def handle_view_messages(self, conn, msg):
         # TODO: handle view messages request
         pass
+
+    def disconnect(self, conn, msg=""):
+        with self.clients_lock:
+            index = self.clients.index(conn)
+            conn.close()
+            self.clients.pop(index)
+
+        with self.users_lock:
+            print(self.active_connections)
+            if conn in self.active_connections.values():
+                for k in self.active_connections.copy():
+                    if self.active_connections[k] == conn:
+                        del self.active_connections[k]
+            print(self.active_connections)
+        return self.generate_payload(Responses.SUCCESS, False, "Disconnected!")
     
 
     def start(self):
