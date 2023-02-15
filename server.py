@@ -124,7 +124,18 @@ class Server(BaseServer):
                     receiver_conn = self.active_connections.get(username)
                     break
         if receiver_conn:
-            self.send_message(receiver_conn, Responses.SUCCESS, f"{sender}\n{text_message}")
+            msg = f"{sender}\n{text_message}"
+
+            message = msg.encode(self.encoding)
+            msg_len = len(message)
+            send_length = str(msg_len).encode(self.encoding)
+            send_length += b' ' * (self.header_length - len(send_length))
+
+            receiver_conn.send(send_length)
+            receiver_conn.send(message)
+
+
+            # self.send_message(receiver_conn, Responses.SUCCESS, f"{sender}\n{text_message}")
             return self.generate_payload(Responses.SUCCESS, True, "Message sent.")
         else:
             return self.generate_payload(Responses.FAILURE, True, "Receiver not found.")

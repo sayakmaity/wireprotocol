@@ -1,5 +1,6 @@
 import socket
 import logging
+import threading
 import asyncio
 from codes import Requests, Responses
 
@@ -20,7 +21,6 @@ class Client:
         self.encoding = encoding
         self.addr = (host, port)
         self.client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.client.connect(self.addr)
 
     def start_logger(self):
         """
@@ -136,24 +136,47 @@ class Client:
             return False
 
 
-    async def receive_message(self):
+    def receive_message(self):
         while True:
             try:
-                msg_length = int(self.client.recv(self.header_length).decode(self.encoding).strip())
-                msg = self.client.recv(msg_length).decode(self.encoding)
-                print(msg)
+                message_header = self.client.recv(self.header_length)
+                if not len(message_header):
+                    print("[DISCONNECTED] You have been disconnected from the server.")
+                    self.client.close()
+                    break
+
+                message_length = int(message_header.decode(self.encoding).strip())
+                message = self.client.recv(message_length).decode(self.encoding)
+
+                print(f"[RECEIVED MESSAGE] {message}")
             except Exception as e:
                 logging.exception(e)
+                self.disconnect()
                 break
 
-    async def start_message_receiver(self):
-        asyncio.create_task(self.receive_message())
+    def start(self):
+        self.start_logger()
+        try:
+            self.client.connect(self.addr)
+        except KeyboardInterrupt:
+            logging.info("Shutting down client")
+            self.disconnect()
+
+    
+    def main(self):
+        receive_thread = threading.Thread(target=self.receive_message)
+        receive_thread.start()
 
 
-# if __name__ == '__main__':
-#     client = Client('10.250.37.222')
-#     client.start_logger()
+if __name__ == '__main__':
+    client = Client('10.250.37.222')
+    client.start()
+    client.create_account("jchiu") # replace "johndoe" with the desired username
 
-#     if client.login("jchiu"):
-#         client.start_message_receiver()
+    # Start the async message receiver
+    client.login("jchiu")
+    client.main()
+
+    # Log out and close the connection
+    # client.disconnect()
 
