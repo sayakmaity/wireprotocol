@@ -1,15 +1,17 @@
 class Requests:
-    LOGIN = "00"
-    CREATE_ACCOUNT = "01"
-    DELETE_ACCOUNT = "02"
-    LIST_ACCOUNTS = "03"
-    SEND_MESSAGE = "04"
-    VIEW_MESSAGES = "05"
-    DISCONNECT = "06"
+    LOGIN = 0
+    CREATE_ACCOUNT = 1
+    DELETE_ACCOUNT = 2
+    LIST_ACCOUNTS = 3
+    SEND_MESSAGE = 4
+    VIEW_MESSAGES = 5
+    DISCONNECT = 6
 
 class Responses:
-    SUCCESS = "00"
-    FAILURE = "01"
+    SUCCESS = 7
+    FAILURE = 8
+    DISCONNECT = 9
+    PROTOCOL_ERR = 10
 
     
 

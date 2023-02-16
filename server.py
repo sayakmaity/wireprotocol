@@ -3,6 +3,8 @@ import threading
 from codes import Requests, Responses
 import logging
 import fnmatch
+import signal
+import select
 from base_server import BaseServer
 
 from user import User
@@ -34,8 +36,6 @@ class Server(BaseServer):
         
         self.clients_lock = threading.Lock()
         self.clients = []
-
-        self.users_lock = threading.Lock()
         self.usernames = []
         self.username_to_user = {}
         self.active_connections = {}
@@ -51,13 +51,18 @@ class Server(BaseServer):
         }
 
         # Create a new server socket instance and bind it to the specified host and port
+        self.shutdown_flag = False
         self.server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.server.bind((self.host, self.port))
+    
+    def _handle_signal(self, signum, frame):
+        self.shutdown_flag = True
+        logging.info(f"[SHUTDOWN] Received signal {signum}. Shutting down server...")
 
     def handle_login(self, conn, msg):
         username = msg
-        with self.users_lock:
+        with self.clients_lock:
             if username in self.usernames:
                 if username in self.active_connections:
                     return self.generate_payload(Responses.FAILURE, True, "User already logged in")
@@ -69,7 +74,7 @@ class Server(BaseServer):
 
     def handle_create_account(self, conn, msg):
         username = msg
-        with self.users_lock:
+        with self.clients_lock:
             if username in self.usernames:
                 return self.generate_payload(Responses.FAILURE, True, "Username already exists")
             else:
@@ -81,8 +86,10 @@ class Server(BaseServer):
 
     def handle_delete_account(self, conn, msg):
         username = msg
-        with self.users_lock:
-            if username in self.usernames:
+        with self.clients_lock:
+            if username in self.active_connections:
+                return self.generate_payload(Responses.FAILURE, True, "Account is logged in right now")
+            elif username in self.usernames:
                 user = self.username_to_user[username]
                 del user
                 self.usernames.remove(username)
@@ -90,7 +97,6 @@ class Server(BaseServer):
                 return self.generate_payload(Responses.SUCCESS, True, "Account deleted successfully")
             else:
                 return self.generate_payload(Responses.FAILURE, True, "Account not found")
-
     def handle_list_accounts(self, conn, msg):
         """
         Handle a list accounts request from a client.
@@ -133,14 +139,7 @@ class Server(BaseServer):
 
         if receiver_conn:
             msg = f"\n<{sender}>: {text_message}"
-
-            message = msg.encode(self.encoding)
-            msg_len = len(message)
-            send_length = str(msg_len).encode(self.encoding)
-            send_length += b' ' * (self.header_length - len(send_length))
-            
-            receiver_conn.send(send_length)
-            receiver_conn.send(message)
+            self.send_message(receiver_conn, Responses.SUCCESS, msg)
             return self.generate_payload(Responses.SUCCESS, True, "Message sent.")
         else:
             user = (self.username_to_user[receiver])
@@ -150,7 +149,7 @@ class Server(BaseServer):
 
 
     def handle_view_messages(self, conn, msg=""):
-        with self.users_lock:
+        with self.clients_lock:
             username = None
             for u, connection in self.active_connections.items():
                 if connection == conn:
@@ -180,43 +179,49 @@ class Server(BaseServer):
 
 
     def disconnect(self, conn, msg=""):
-        with self.clients_lock:
-            index = self.clients.index(conn)
-            conn.close()
-            self.clients.pop(index)
+        index = self.clients.index(conn)
+        self.clients.pop(index)
 
-        with self.users_lock:
-            print(self.active_connections)
-            if conn in self.active_connections.values():
-                for k in self.active_connections.copy():
-                    if self.active_connections[k] == conn:
-                        del self.active_connections[k]
-            print(self.active_connections)
+        if conn in self.active_connections.values():
+            for k in self.active_connections.copy():
+                if self.active_connections[k] == conn:
+                    print(k, conn)
+                    del self.active_connections[k]
+        conn.close()
         return self.generate_payload(Responses.SUCCESS, False, "Disconnected!")
     
 
     def start(self):
-        """
-        Start the server and listen for incoming connections.
-        """
+        signal.signal(signal.SIGINT, self._handle_signal)
+
         self.start_logger()
+        #self.server.settimeout(1.0)
         self.server.listen()
         logging.info(f"[LISTENING] Server is listening on port {self.port}")
-        try:
-            while True:
+
+        while not self.shutdown_flag:
+            ready, _, _ = select.select([self.server], [], [], 1.0)
+            if self.server in ready:
                 conn, addr = self.server.accept()
                 with self.clients_lock:
                     self.clients.append(conn)
                 thread = threading.Thread(target=self.handle_client, args=(conn, addr))
                 thread.start()
                 logging.info(f"[ACTIVE CONNECTIONS] {threading.active_count() - 1}")
-        except KeyboardInterrupt:
-            logging.info("[SHUTTING DOWN] Closing server socket...")
-            self.server.close()
-            with self.clients_lock:
-                for conn in self.clients:
-                    self.disconnect(conn)
-            logging.info("[SHUTDOWN COMPLETE] Goodbye!")
+
+        # Shutdown the server gracefully
+        logging.info("[SHUTTING DOWN] Closing server socket...")
+
+        with self.clients_lock:
+            while self.clients:
+                conn = self.clients[0]
+                self.send_message(conn, Responses.DISCONNECT, "You have been disconnected!")
+                self.disconnect(conn)
+
+        self.server.close()
+        logging.info("[SHUTDOWN COMPLETE] Goodbye!")
+
+
 
 if __name__ == "__main__":
     server = Server()

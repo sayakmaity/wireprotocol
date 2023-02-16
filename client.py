@@ -2,8 +2,9 @@ import socket
 import logging
 import threading
 import time
-from user import User
+import sys
 from codes import Requests, Responses
+from protocol import WireProtocol, VERSION, HEADER_SIZE, ENCODING
 
 def get_lock_decorator(func):
     def wrapper(*args, **kwargs):
@@ -18,16 +19,7 @@ def get_lock_decorator(func):
 
 
 class Client:
-    """
-    A class representing a client that can send messages to the server.
-
-    Parameters:
-    host (str): The IP address of the server to connect to.
-    port (int): The port number to use for the server.
-    header_length (int, optional): The header size of the message in bytes. Defaults to 64.
-    encoding (str, optional): The encoding format to use for the messages. Defaults to 'utf-8'.
-    """
-    def __init__(self, host, port=5050, header_length=64, encoding='utf-8'):
+    def __init__(self, host, port=5050, header_length=HEADER_SIZE, encoding=ENCODING):
         self.host = host
         self.port = port
         self.header_length = header_length
@@ -36,11 +28,15 @@ class Client:
         self.client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.lock = threading.Lock()
         self.receive_flag = True # indicates if background thread should be listening
-        
-        self.client.connect(self.addr)
+        try:
+            self.client.connect(self.addr)
+        except ConnectionRefusedError:
+            print("Server is off.")
+            sys.exit(0)
         self._start_logger()
         self.isLoggedIn = False
         self.username = None
+        self.listen_for_messages()
 
     def _start_logger(self):
         """
@@ -49,7 +45,6 @@ class Client:
         logging.basicConfig(level=logging.INFO,
         handlers=[
                 logging.FileHandler("client_debug.log"),
-                logging.StreamHandler()
             ]
         )
 
@@ -59,15 +54,18 @@ class Client:
             if not len(message_header):
                 print("[DISCONNECTED] You have been disconnected from the server.")
                 self.client.close()
-            if message_header.decode(self.encoding).strip():
-                message_length = int(message_header.decode(self.encoding).strip())
-                message = self.client.recv(message_length).decode(self.encoding)
-                return message
+                sys.exit(0)
+            else:
+                version, size, operation = WireProtocol.decode_header(message_header)
+                message = self.client.recv(size).decode(self.encoding)
+                return operation, message
         except Exception as e:
             logging.exception(e)
-            self.disconnect()
+            self.stop_listening_for_messages()
+            self.client.close()
+            sys.exit(0)
 
-    def send_message(self, msg):
+    def send_message(self, op, msg):
         """
         Send a message to the connected server.
 
@@ -75,92 +73,93 @@ class Client:
         msg (str): The message to send.
         """
         try:
-            message = msg.encode(self.encoding)
-            msg_len = len(message)
-            send_length = str(msg_len).encode(self.encoding)
-            send_length += b' ' * (self.header_length - len(send_length))
-            self.client.send(send_length)
-            self.client.send(message)
+            header, encoded = WireProtocol.encode(version=1, operation=op, msg=msg)
+            self.client.send(header)
+            time.sleep(0.1)
+            self.client.send(encoded)
             return self._receive_ack()
-
-            # return self.client.recv(2048).decode(self.encoding)
-        except Exception as e:
-            logging.exception(e)
-            return None
+        except(BrokenPipeError, OSError) as e:
+            logging.error(f"Failed to send message: {e}")
+            self.stop_listening_for_messages()
+            self.client.close()
+            sys.exit(0)
 
     def disconnect(self):
         """
         Disconnect from the server.
         """
-        self.send_message(Requests.DISCONNECT)
+        self.send_message(op=Requests.DISCONNECT, msg="")
         self.client.close()
+        sys.exit(0)
 
     @get_lock_decorator
     def login(self, username: str):
         try:
-            response = self.send_message(f"{Requests.LOGIN}{username}")
-            status = response[:2]
-            message = response[2:]
+            status, message = self.send_message(op=Requests.LOGIN, msg=username)
             if status == Responses.SUCCESS:
                 self.isLoggedIn = True
                 self.username = username
                 logging.info(f"[LOGIN] User {username} has successfully logged in")
-                client.listen_for_messages()
+                print(f"[LOGIN] User {username} has successfully logged in")
                 return True
             else:
                 logging.warning(f"[LOGIN] Login failed for username: {username}. Reason: {message}")
+                print(f"[LOGIN] Login failed for username: {username}. Reason: {message}")
                 return False
         except Exception as e:
             logging.exception(f"[LOGIN] Exception occurred while logging in as {username}: {e}")
+            print(f"[LOGIN] Exception occurred while logging in as {username}: {e}")
             return False
 
     @get_lock_decorator
     def create_account(self, username: str):
         try:
-            response = self.send_message(f"{Requests.CREATE_ACCOUNT}{username}")
-            status = response[:2]
-            message = response[2:]
+            status, message = self.send_message(Requests.CREATE_ACCOUNT, username)
             if status == Responses.SUCCESS:
                 logging.info(f"[ACCOUNT CREATION] Account created successfully for username: {username}")
+                print(f"[ACCOUNT CREATION] Account created successfully for username: {username}")
                 return True
             else:
                 logging.warning(f"[ACCOUNT CREATION] Account creation failed for username: {username}. Reason: {message}")
+                print(f"[ACCOUNT CREATION] Account creation failed for username: {username}. Reason: {message}")
                 return False
         except Exception as e:
             logging.exception(f"[CREATE ACCOUNT] Exception occurred while creating account {username}: {e}")
+            print(f"[CREATE ACCOUNT] Exception occurred while creating account {username}: {e}")
             return False
 
     @get_lock_decorator
     def delete_account(self, username: str):
         try:
-            response = self.send_message(f"{Requests.DELETE_ACCOUNT}{username}")
-            status = response[:2]
-            message = response[2:]
+            status, message = self.send_message(Requests.DELETE_ACCOUNT, username)
             if status == Responses.SUCCESS:
                 logging.info(f"[DELETE ACCOUNT] Account {username} deleted")
+                print(f"[DELETE ACCOUNT] Account {username} deleted")
                 return True
             else:
                 logging.error(f"[DELETE ACCOUNT] Failed to delete account {username}. Reason: {message}")
+                print(f"[DELETE ACCOUNT] Failed to delete account {username}. Reason: {message}")
                 return False
         except Exception as e:
             logging.exception(f"[DELETE ACCOUNT] Exception occurred while deleting account {username}: {e}")
+            print(f"[DELETE ACCOUNT] Exception occurred while deleting account {username}: {e}")
             return False
 
     @get_lock_decorator
     def list_accounts(self, pattern: str):
         try:
-            response = self.send_message(f"{Requests.LIST_ACCOUNTS}{pattern}")
-            status = response[:2]
-            message = response[2:]
-
+            status, message = self.send_message(Requests.LIST_ACCOUNTS, pattern)
             if status == Responses.SUCCESS:
                 logging.info(f"[LIST ACCOUNTS] Received list of accounts matching pattern {pattern}: {message}")
+                print(f"[LIST ACCOUNTS] Received list of accounts matching pattern {pattern}: {message}")
                 return True
             else:
                 logging.warning(f"[LIST ACCOUNTS] Failed to retrieve list of accounts matching pattern {pattern}. Reason: {message}")
+                print(f"[LIST ACCOUNTS] Failed to retrieve list of accounts matching pattern {pattern}. Reason: {message}")
                 return False
         except Exception as e:
             logging.exception(f"[LIST ACCOUNTS] Exception occurred while retrieving list of accounts matching pattern {pattern}: {e}")
+            print(f"[LIST ACCOUNTS] Exception occurred while retrieving list of accounts matching pattern {pattern}: {e}")
             return False
 
     @get_lock_decorator
@@ -168,18 +167,20 @@ class Client:
         try:
             if not self.isLoggedIn or not self.username:
                 logging.warning(f"[SEND MESSAGE] You must be logged in first.")
+                print(f"[SEND MESSAGE] You must be logged in first.")
                 return False
-            response = self.send_message(f"{Requests.SEND_MESSAGE}{self.username}\n{receiver}\n{message}")
-            status = response[:2]
-            message = response[2:]
+            status, message = self.send_message(Requests.SEND_MESSAGE, f"{self.username}\n{receiver}\n{message}")
             if status == Responses.SUCCESS:
                 logging.info(f"[SEND MESSAGE] Message sent to {receiver}")
+                print(f"[SEND MESSAGE] Message sent to {receiver}")
                 return True
             else:
                 logging.warning(f"[SEND MESSAGE] Message sending failed to {receiver}. Reason: {message}")
+                print(f"[SEND MESSAGE] Message sending failed to {receiver}. Reason: {message}")
                 return False
         except Exception as e:
             logging.exception(f"[SEND MESSAGE] Exception occurred while sending message to {receiver}: {e}")
+            print(f"[SEND MESSAGE] Exception occurred while sending message to {receiver}: {e}")
             return False
     
     @get_lock_decorator
@@ -188,17 +189,16 @@ class Client:
             if not self.isLoggedIn or not self.username:
                 logging.warning(f"[SEND MESSAGE] You must be logged in first.")
                 return False
-            response = self.send_message(Requests.VIEW_MESSAGES)
-            status = response[:2]
-            message = response[2:]
+            status, message = self.send_message(Requests.VIEW_MESSAGES, "")
             if status == Responses.SUCCESS:
-                # logging.info(f"[VIEW MESSAGES] Messages Found: {message}")
                 print(f"Messages Found: {message}")
                 return True
             else:
                 logging.warning(f"[VIEW MESSAGES] View messages failed due to {message}")
+                print(f"[VIEW MESSAGES] View messages failed due to {message}")
         except Exception as e:
             logging.exception(f"[VIEW MESSAGES] Exception occurred while viewing messages: {e}")
+            print(f"[VIEW MESSAGES] Exception occurred while viewing messages: {e}")
             return False
 
     def _receive_message(self):
@@ -206,46 +206,54 @@ class Client:
             message_header = self.client.recv(self.header_length, socket.MSG_DONTWAIT)
             if not len(message_header):
                 print("[DISCONNECTED] You have been disconnected from the server.")
+                self.stop_listening_for_messages()
                 self.client.close()
-                self.disconnect()
-            if message_header.decode(self.encoding).strip():
-                message_length = int(message_header.decode(self.encoding).strip())
-                message = self.client.recv(message_length).decode(self.encoding)
-                return message    
+                sys.exit(0)
+            else:
+                version, size, operation = WireProtocol.decode_header(message_header)
+                message = self.client.recv(size).decode(self.encoding)
+                return operation, message
         except BlockingIOError as e:
             pass
         except Exception as e:
             logging.exception(e)
-            self.disconnect()
+            self.stop_listening_for_messages()
+            self.client.close()
+            sys.exit(0)
     
     def listen_for_messages(self):
-        receive_thread = threading.Thread(target=self._receive_message_poll)
+        self.receive_event = threading.Event()
+        self.receive_event.set()
+        receive_thread = threading.Thread(target=self._receive_message_poll, args=(self.receive_event,))
         receive_thread.start()
-        
 
-    
-    def _receive_message_poll(self):
-        while True:
+    def stop_listening_for_messages(self):
+        self.receive_event.clear()
+
+    def _receive_message_poll(self, event):
+        while event.is_set():
             try:
                 with self.lock:
                     if self.receive_flag:
                         message = self._receive_message()
                         if message:
-                            print(f"[Received Message]{message}")
+                            status, msg = message
+                            if status == Responses.DISCONNECT:
+                                logging.info("Received disconnect signal. Stopping message polling and closing connection to server.")
+                                print("Server disconnected.")
+                                self.stop_listening_for_messages()
+                                self.client.close()()
+                                sys.exit(0)
+                            elif status == Responses.SUCCESS:
+                                print(f"\r\n\n[RECEIVED MESSAGE]{msg}\n\nEnter command: ", end="")
+                            else:
+                                logging.warning("[RECEIVED UNKNOWN SIGNAL] Disconnecting")
+                                self.stop_listening_for_messages()
+                                self.client.close()
+                                sys.exit(0)
                 time.sleep(1)
             except Exception as e:
                 logging.exception(e)
-                self.disconnect()
-                break
-
-
-if __name__ == '__main__':
-    client = Client('10.250.37.222')
-    client.listen_for_messages()
-    client.create_account("Sayak2")
-    # client.run_command(lambda: client.create_account("sayak"))
-
-
-    # Log out and close the connection
-    # client.disconnect()
-
+                self.stop_listening_for_messages()
+                self.client.close()
+                sys.exit(0)

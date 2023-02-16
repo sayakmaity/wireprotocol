@@ -1,6 +1,7 @@
 import socket
 import threading
 from codes import Requests, Responses
+from protocol import WireProtocol, VERSION, HEADER_SIZE, ENCODING
 import logging
 
 class BaseServer:
@@ -25,8 +26,8 @@ class BaseServer:
     def __init__(self,
         host: str = socket.gethostbyname(socket.gethostname()),
         port: int = 5050,
-        encoding: str = 'utf-8',
-        header_length: int = 64,
+        encoding: str = ENCODING,
+        header_length: int = HEADER_SIZE,
     ):
         self.host = host
         self.port = port
@@ -37,9 +38,7 @@ class BaseServer:
         self.clients_lock = threading.Lock()
         self.clients = []
 
-        self.requests = {
-            Requests.DISCONNECT: self.disconnect
-        }
+        self.requests = {}
 
         # Create a new server socket instance and bind it to the specified host and port
         self.server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -75,21 +74,20 @@ class BaseServer:
         connected = True
         while connected:
             try:
-                msg_length = self.receive_message(conn, self.header_length)
-                if msg_length:
-                    msg_length = int(msg_length)
-                    msg = self.receive_message(conn, msg_length)
-                    metadata = self.handle_request(conn, msg)
+                header = self.receive_message(conn, self.header_length)
+                if header:
+                    version, msg_length, operation = WireProtocol.decode_header(header)
+                    msg = self.receive_message(conn, msg_length).decode(self.encoding)
+                    metadata = self.handle_request(conn, operation, msg)
 
                     logging.info(f"[{addr}] {metadata}")
                     connected = metadata["server_running"]
                     if not connected:
                         break
                     self.send_message(conn, metadata['status'],  metadata["message"])
-            except (BrokenPipeError, ConnectionResetError):
+            except (OSError, BrokenPipeError, ConnectionResetError):
                 # This means the client has disconnected
                 logging.error(f"[DISCONNECT] {addr} disconnected unexpectedly")
-                self.disconnect(conn)
                 break
             except Exception as e:
                 logging.exception(e)
@@ -108,7 +106,7 @@ class BaseServer:
         Returns:
             str: The received message.
         """
-        return conn.recv(length).decode(self.encoding)
+        return conn.recv(length)
 
     def send_message(self, conn, response_code, message):
         """
@@ -118,16 +116,11 @@ class BaseServer:
             conn (socket.socket): The client socket connection.
             message (str): The message to send.
         """
-        msg = f"{response_code}{message}"
-        message = msg.encode(self.encoding)
-        msg_len = len(message)
-        send_length = str(msg_len).encode(self.encoding)
-        send_length += b' ' * (self.header_length - len(send_length))
+        header, encoded = WireProtocol.encode(version=1, operation=response_code, msg=message)
+        conn.send(header)
+        conn.send(encoded)
 
-        conn.send(send_length)
-        conn.send(message)
-
-    def handle_request(self, conn, msg):
+    def handle_request(self, conn, op, msg):
         """
         Handle an incoming request from a client.
 
@@ -139,10 +132,9 @@ class BaseServer:
             dict: The response metadata in the form of a dictionary.
         """
         try:
-            request_code = msg[:2]
-            handler = self.requests.get(request_code)
+            handler = self.requests.get(op)
             if handler:
-                return handler(conn, msg[2:])
+                return handler(conn, msg)
             else:
                 return self.generate_payload(Responses.FAILURE, True, "Unrecognized Response")
         except Exception as e:
