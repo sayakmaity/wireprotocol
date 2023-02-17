@@ -141,6 +141,16 @@ class BaseServer:
             logging.exception(e)
     
     def disconnect(self, conn, msg=""):
+        """
+        Handle a disconnect request from a client.
+
+        Parameters:
+        conn (socket.socket): The client socket connection.
+        msg (str, optional): The request message. Defaults to an empty string.
+
+        Returns:
+        dict: The response metadata in the form of a dictionary.
+        """
         with self.clients_lock:
             index = self.clients.index(conn)
             conn.close()
@@ -148,6 +158,17 @@ class BaseServer:
         return self.generate_payload(Responses.SUCCESS, False, "Disconnected!")
 
     def generate_payload(self, status_code, connected, msg):
+        """
+        Generate a dictionary containing the response metadata.
+
+        Parameters:
+        status_code (int): The response status code.
+        connected (bool): Whether the server is still running or not.
+        msg (str): The message to include in the response.
+
+        Returns:
+        dict: A dictionary containing the response metadata.
+        """
         return {
             "status": status_code,
             "server_running": connected,

@@ -1,13 +1,13 @@
 import socket
 import threading
-from codes import Requests, Responses
 import logging
 import fnmatch
 import signal
 import select
+from codes import Requests, Responses
 from base_server import BaseServer
-
 from user import User
+
 
 class Server(BaseServer):
     """
@@ -55,12 +55,22 @@ class Server(BaseServer):
         self.server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.server.bind((self.host, self.port))
-    
+
     def _handle_signal(self, signum, frame):
         self.shutdown_flag = True
         logging.info(f"[SHUTDOWN] Received signal {signum}. Shutting down server...")
 
     def handle_login(self, conn, msg):
+        """
+        Handle a login request from a client.
+
+        Parameters:
+        conn (socket.socket): The client socket connection.
+        msg (str): The username of the client.
+
+        Returns:
+        dict: The response metadata in the form of a dictionary.
+        """
         username = msg
         with self.clients_lock:
             if username in self.usernames:
@@ -73,6 +83,16 @@ class Server(BaseServer):
                 return self.generate_payload(Responses.FAILURE, True, "Username does not exist")
 
     def handle_create_account(self, conn, msg):
+        """
+        Handle a create account request from a client.
+
+        Parameters:
+        conn (socket.socket): The client socket connection.
+        msg (str): The username of the client.
+
+        Returns:
+        dict: The response metadata in the form of a dictionary.
+        """
         username = msg
         with self.clients_lock:
             if username in self.usernames:
@@ -83,8 +103,17 @@ class Server(BaseServer):
                 self.username_to_user[username] = new_user
                 return self.generate_payload(Responses.SUCCESS, True, "User Created")
 
-
     def handle_delete_account(self, conn, msg):
+        """
+        Handle a delete account request from a client.
+
+        Parameters:
+        conn (socket.socket): The client socket connection.
+        msg (str): The username of the client.
+
+        Returns:
+        dict: The response metadata in the form of a dictionary.
+        """
         username = msg
         with self.clients_lock:
             if username in self.active_connections:
@@ -97,6 +126,7 @@ class Server(BaseServer):
                 return self.generate_payload(Responses.SUCCESS, True, "Account deleted successfully")
             else:
                 return self.generate_payload(Responses.FAILURE, True, "Account not found")
+
     def handle_list_accounts(self, conn, msg):
         """
         Handle a list accounts request from a client.
@@ -120,8 +150,17 @@ class Server(BaseServer):
         else:
             return self.generate_payload(Responses.FAILURE, True, "No matching accounts found.")
 
-
     def handle_send_message(self, conn, msg):
+        """
+        Handle a send message request from a client.
+
+        Parameters:
+        conn (socket.socket): The client socket connection.
+        msg (str): The message to be sent.
+
+        Returns:
+        dict: The response metadata in the form of a dictionary.
+        """
         sender, receiver, text_message = msg.split("\n")
         sender = sender.strip()
         receiver = receiver.strip()
@@ -149,6 +188,16 @@ class Server(BaseServer):
 
 
     def handle_view_messages(self, conn, msg=""):
+        """
+        Handle a view messages request from a client.
+
+        Parameters:
+        conn (socket.socket): The client socket connection.
+        msg (str, optional): The request message. Defaults to an empty string.
+
+        Returns:
+        dict: The response metadata in the form of a dictionary.
+        """
         with self.clients_lock:
             username = None
             for u, connection in self.active_connections.items():
@@ -162,23 +211,21 @@ class Server(BaseServer):
                 while msg:
                     message += (msg)
                     msg = user.get_message()
-
-                # msg_len = len(message)
-                # send_length = str(msg_len).encode(self.encoding)
-                # send_length += b' ' * (self.header_length - len(send_length))
-                
-                # conn.send(send_length)
-                # conn.send(message)
                 return self.generate_payload(Responses.SUCCESS, True, message)
             else:
                 return self.generate_payload(Responses.FAILURE, True, "Server thinks user does not exist.")
 
-
-
-
-
-
     def disconnect(self, conn, msg=""):
+        """
+        Handle a disconnect request from a client.
+
+        Parameters:
+        conn (socket.socket): The client socket connection.
+        msg (str, optional): The request message. Defaults to an empty string.
+
+        Returns:
+        dict: The response metadata in the form of a dictionary.
+        """
         index = self.clients.index(conn)
         self.clients.pop(index)
 
@@ -189,13 +236,15 @@ class Server(BaseServer):
                     del self.active_connections[k]
         conn.close()
         return self.generate_payload(Responses.SUCCESS, False, "Disconnected!")
-    
+        
 
     def start(self):
+        """
+        Start the server and listen for incoming connections.
+        """
         signal.signal(signal.SIGINT, self._handle_signal)
 
         self.start_logger()
-        #self.server.settimeout(1.0)
         self.server.listen()
         logging.info(f"[LISTENING] Server is listening on port {self.port}")
 
@@ -220,8 +269,6 @@ class Server(BaseServer):
 
         self.server.close()
         logging.info("[SHUTDOWN COMPLETE] Goodbye!")
-
-
 
 if __name__ == "__main__":
     server = Server()
