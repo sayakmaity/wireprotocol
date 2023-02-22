@@ -145,7 +145,7 @@ class Chat(chatapp_pb2_grpc.ChatServiceServicer):
             return chatapp_pb2.User(text=message)
 
 
-def main(host: str = "127.0.0.1", port: int = 3000) -> None:
+def main(host: str = socket.gethostbyname(socket.gethostname()), port: int = 3000) -> None:
     """
     Initializes the server.
     @Parameter: None.

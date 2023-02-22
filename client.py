@@ -11,7 +11,7 @@ run_event = threading.Event()
 # Event to block client UI until server response
 respond_event = threading.Event()
 
-def main(host: str = "127.0.0.1", port: int = 3000) -> None:
+def main(host: str = "10.250.103.17", port: int = 3000) -> None:
     print(f"Starting connection to {host}:{port}")
 
     # listen_thread = None
