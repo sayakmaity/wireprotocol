@@ -1,0 +1,31 @@
+syntax="proto3";
+// The chat service definition.
+service ChatService {
+  rpc Chat(Message) returns (User) {}
+  rpc Packet(Request) returns (User) {}
+  rpc ListenToPendingMessages(Request) returns (PendingMsgsResponse) {}
+}
+
+// The request message containing the user's name.
+message Request {
+  string action = 1;
+  string username = 2;
+}
+message Message {
+  string sender = 1;
+  string receiver = 2;
+  string text = 3;
+}
+// The response message containing the greetings
+message User {
+  string text = 1;
+}
+
+message PendingMsgsResponse {
+  string message = 1;
+  bool isEmpty = 2;
+}
+
+// summary of changes
+// changed UserReply to User and will use it for simple requests
+// changed user field from message to text

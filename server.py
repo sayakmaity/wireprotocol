@@ -1,85 +1,167 @@
+import socket
+import threading
+import sys
+from concurrent import futures
+
 import grpc
-import time
-import chat_pb2
-import chat_pb2_grpc
-import concurrent
 
-# Define the chat service class
-class ChatService(chat_pb2_grpc.ChatServiceServicer):
-    # Define a dictionary to store the list of users and their channels
-    users = {}
+import chatapp_pb2, chatapp_pb2_grpc
 
-    def Login(self, request, context):
-        # Check if the user is already logged in
-        if request.username in self.users:
-            return chat_pb2.LoginResponse(success=False, message="User already logged in")
+users_connections = {}
+users = {}
+# Event that is set when threads are running and cleared when you want threads to stop
+run_event = threading.Event()
 
-        # Add the user to the list of users and create a new channel for them
-        self.users[request.username] = context
-        return chat_pb2.LoginResponse(success=True, message="User logged in")
+def create_user(username: str) -> bool:
+    if (username in users):
+        return False
+    users[username] = []
+    return True
 
-    def Logout(self, request, context):
-        # Check if the user is logged in
-        if request.username not in self.users:
-            return chat_pb2.LoginResponse(success=False, message="User not logged in")
+def list_users(wildcard: str) -> "list[str]":
 
-        # Remove the user from the list of users and close their channel
-        del self.users[request.username]
-        context.cancel()
-        return chat_pb2.LoginResponse(success=True, message="User logged out")
+    temp = list(users.keys())
+    if wildcard:
+        temp = list(filter(lambda x: wildcard in x, temp))
 
-    def CreateAccount(self, request, context):
-        # Check if the username already exists
-        if request.username in self.users:
-            return chat_pb2.CreateAccountResponse(success=False, message="Username already taken")
+    return temp
 
-        # Add the user to the list of users and create a new channel for them
-        self.users[request.username] = context
-        return chat_pb2.CreateAccountResponse(success=True, message="Account created")
+def add_pending_message(username: str, message: str) -> bool:
 
-    def DeleteAccount(self, request, context):
-        # Check if the user is logged in
-        if request.username not in self.users:
-            return chat_pb2.LoginResponse(success=False, message="User not logged in")
+    create_user(username)
+    users[username].append(message)
 
-        # Remove the user from the list of users and close their channel
-        del self.users[request.username]
-        context.cancel()
-        return chat_pb2.DeleteAccountResponse(success=True, message="Account deleted")
 
-    def ListAccounts(self, request, context):
-        # Create a list of usernames matching the pattern
-        usernames = [username for username in self.users.keys() if request.pattern in username]
-        return chat_pb2.ListAccountsResponse(usernames=usernames)
+def get_pending_messages(username: str) -> "list[str]":
 
-    def SendMessage(self, request, context):
-        # Check if the sender is logged in
-        if request.sender not in self.users:
-            return chat_pb2.SendMessageResponse(success=False, message="Sender not logged in")
+    if not (username in users):
+        return []
+    return users[username]
 
-        # Check if the receiver is logged in
-        if request.receiver not in self.users:
-            return chat_pb2.SendMessageResponse(success=False, message="Receiver not logged in")
 
-        # Send the message to the receiver
-        receiver_context = self.users[request.receiver]
-        receiver_context.send_initial_metadata(('sender', request.sender),)
-        receiver_context.send_message(request)
+def clear_pending_messages(username: str) -> None:
 
-        return chat_pb2.SendMessageResponse(success=True, message="Message sent")
+    if (username in users):
+        users[username] = []
 
-# Create a gRPC server and add the chat service to it
-server = grpc.server(concurrent.futures.ThreadPoolExecutor(max_workers=10))
-chat_pb2_grpc.add_ChatServiceServicer_to_server(ChatService(), server)
 
-# Start the server
-print("Starting server...")
-server.add_insecure_port('[::]:50051')
-server.start()
+def return_pending_messages(username: str) -> "list[str]":
 
-# Keep the server running
-try:
-    while True:
-        time.sleep(86400)
-except KeyboardInterrupt:
-    server.stop(0)
+    if (username in users):
+        messages = get_pending_messages(username)
+        clear_pending_messages(username)
+        return messages
+    return []
+
+
+def delete_user(username: str) -> None:
+    if (username in users):
+        del users[username]
+    return
+
+def handle_payload(payload: "list[str]"):
+
+    print("Handling payload:", payload)
+
+    payload = payload[1:]
+    if payload[0] == "join":
+        success = create_user(payload[1])
+        return (
+            success,
+            "User created successfully. Welcome!" if success else "Welcome back!",
+        )
+    elif payload[0] == "list":
+        print("Handling list action")
+        if len(payload) == 1:
+            payload.append("")
+        users = list_users(payload[1])
+        print("Retrieved users: ", users)
+        return (users, ", ".join(users))
+    elif payload[0] == "delete":
+        print("Handling delete action")
+        result = delete_user(payload[1])
+        print("Deletion result: ", result)
+        return (
+            result,
+            "User deleted successfully." if result else "User does not exist.",
+        )
+    else:
+        return (None, None)
+
+
+def handle_send_grpc(sender, receiver, message):
+    message = f"{sender} says: {message}"
+    if receiver in users:
+        add_pending_message(receiver, message)
+        return "Message sent successfully."
+    else:
+        return "The receipient does not exist."
+
+
+# gRPC implementation
+class Chat(chatapp_pb2_grpc.ChatServiceServicer):
+    def __init__(self):
+        pass
+
+    # client <> client communication
+    def ListenToPendingMessages(self, request, context):
+        pending_messages = return_pending_messages(request.username)
+        return chatapp_pb2.PendingMsgsResponse(
+            message="\n".join(pending_messages), isEmpty=len(pending_messages) == 0
+        )
+
+    def Packet(self, request, context):
+        action = request.action
+        username = request.username
+
+        if action == "list":
+            payload = [None, action, username]
+            return chatapp_pb2.User(text=handle_payload(payload)[1])
+
+        elif action == "delete":
+            if username in users_connections.keys():
+                return chatapp_pb2.User(text="Cannot delete logged in user.")
+
+            payload = [None, action, username]
+            return chatapp_pb2.User(text=handle_payload(payload)[1])
+
+        elif action == "join":
+            if username in users_connections.keys():  # already logged in, refuse client
+                return chatapp_pb2.User(text="Already logged in elsewhere.")
+
+            users_connections[username] = None
+            return chatapp_pb2.User(text=handle_payload([None, "join", username])[1])
+
+        elif action == "quit":
+            if username in users_connections.keys():
+                del users_connections[username]
+            return chatapp_pb2.User(text="")
+        else:
+            return chatapp_pb2.User(text="Invalid action")
+
+    def Chat(self, request, context):
+        if request.sender and request.receiver and request.text:
+            message = handle_send_grpc(request.sender, request.receiver, request.text)
+            return chatapp_pb2.User(text=message)
+
+
+def main(host: str = "127.0.0.1", port: int = 3000) -> None:
+    """
+    Initializes the server.
+    @Parameter: None.
+    @Returns: None.
+    """
+    try:
+        server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
+        chatapp_pb2_grpc.add_ChatServiceServicer_to_server(Chat(), server)
+        server.add_insecure_port(f"{host}:{port}")
+        server.start()
+        print(f"Now listening on {host}:{port}")
+        server.wait_for_termination()
+    except KeyboardInterrupt:
+        server.stop
+        print("Server stopped.")
+
+
+if __name__ == "__main__":
+    main()
