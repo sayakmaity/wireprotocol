@@ -25,10 +25,10 @@ class ChatServiceStub(object):
                 request_serializer=chatapp__pb2.Request.SerializeToString,
                 response_deserializer=chatapp__pb2.User.FromString,
                 )
-        self.ListenToPendingMessages = channel.unary_unary(
-                '/ChatService/ListenToPendingMessages',
+        self.Listen = channel.unary_unary(
+                '/ChatService/Listen',
                 request_serializer=chatapp__pb2.Request.SerializeToString,
-                response_deserializer=chatapp__pb2.PendingMsgsResponse.FromString,
+                response_deserializer=chatapp__pb2.PendingRes.FromString,
                 )
 
 
@@ -48,7 +48,7 @@ class ChatServiceServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
-    def ListenToPendingMessages(self, request, context):
+    def Listen(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -67,10 +67,10 @@ def add_ChatServiceServicer_to_server(servicer, server):
                     request_deserializer=chatapp__pb2.Request.FromString,
                     response_serializer=chatapp__pb2.User.SerializeToString,
             ),
-            'ListenToPendingMessages': grpc.unary_unary_rpc_method_handler(
-                    servicer.ListenToPendingMessages,
+            'Listen': grpc.unary_unary_rpc_method_handler(
+                    servicer.Listen,
                     request_deserializer=chatapp__pb2.Request.FromString,
-                    response_serializer=chatapp__pb2.PendingMsgsResponse.SerializeToString,
+                    response_serializer=chatapp__pb2.PendingRes.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -118,7 +118,7 @@ class ChatService(object):
             insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
 
     @staticmethod
-    def ListenToPendingMessages(request,
+    def Listen(request,
             target,
             options=(),
             channel_credentials=None,
@@ -128,8 +128,8 @@ class ChatService(object):
             wait_for_ready=None,
             timeout=None,
             metadata=None):
-        return grpc.experimental.unary_unary(request, target, '/ChatService/ListenToPendingMessages',
+        return grpc.experimental.unary_unary(request, target, '/ChatService/Listen',
             chatapp__pb2.Request.SerializeToString,
-            chatapp__pb2.PendingMsgsResponse.FromString,
+            chatapp__pb2.PendingRes.FromString,
             options, channel_credentials,
             insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
